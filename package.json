@@ -1,6 +1,6 @@
 {
-  "name": "parse-multipart-data",
-  "version": "0.0.0-development",
+  "name": "dathost-parse-multipart-data",
+  "version": "1.0.0",
   "description": "A javascript/nodejs multipart/form-data parser which operates on raw data.",
   "main": "dist/multipart.js",
   "author": "Ignacio Mazzara (nachomazzara@gmail.com)",
