@@ -163,10 +163,13 @@ function process(part: Part): Input {
     const k = str.split('=')
     const a = k[0].trim()
 
-    const b = JSON.parse(k[1].trim())
+    let value = k[1].trim()
+    if (value.startsWith('"')) {
+      value = JSON.parse(value)
+    }
     const o = {}
     Object.defineProperty(o, a, {
-      value: b,
+      value,
       writable: true,
       enumerable: true,
       configurable: true
@@ -179,7 +182,7 @@ function process(part: Part): Input {
   let input = {}
   if (filenameData) {
     input = obj(filenameData)
-    const contentType = part.contentTypeHeader.split(':')[1].trim()
+    const contentType = part.contentTypeHeader.split(':')[1]?.trim()
     Object.defineProperty(input, 'type', {
       value: contentType,
       writable: true,

@@ -73,4 +73,19 @@ describe('Multipart', function () {
 
     expect(parts.length).to.be.equal(0)
   })
+
+  it('should parse dotnet HttpClient request', function () {
+    const parts = parse(
+      Buffer.from(
+        "--fefd3a31-7200-4abd-a7f6-39e0443ba01a\r\nContent-Disposition: form-data; name=file; filename=TestUploadFile.txt; filename*=utf-8''TestUploadFile.txt\r\n\r\nHELLO\n\nWORLD\n\r\n--fefd3a31-7200-4abd-a7f6-39e0443ba01a--\r\n"
+      ),
+      'fefd3a31-7200-4abd-a7f6-39e0443ba01a'
+    )
+
+    expect(parts.length).to.be.equal(1)
+    expect(parts[0].filename).to.be.equal('TestUploadFile.txt')
+    expect(parts[0].name).to.be.equal('file')
+    expect(parts[0].type).to.be.equal(undefined)
+    expect(parts[0].data.toString()).to.be.equal('HELLO\n\nWORLD\n')
+  })
 })
