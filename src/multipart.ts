@@ -14,7 +14,7 @@
 type Part = {
   contentDispositionHeader: string
   contentTypeHeader: string
-  part: number[]
+  part: Buffer
 }
 
 type Input = {
@@ -36,7 +36,7 @@ export function parse(multipartBodyBuffer: Buffer, boundary: string): Input[] {
   let contentDispositionHeader = ''
   let contentTypeHeader = ''
   let state: ParsingState = ParsingState.INIT
-  let buffer: number[] = []
+  let dataStartIndex = 0
   const allParts: Input[] = []
 
   let currentPartHeaders: string[] = []
@@ -70,7 +70,10 @@ export function parse(multipartBodyBuffer: Buffer, boundary: string): Input[] {
           }
         }
         state = ParsingState.READING_DATA
-        buffer = []
+        dataStartIndex = i + 1
+        // Fast forward: skip directly to boundary instead of byte-by-byte
+        const boundaryPos = multipartBodyBuffer.indexOf('\r\n--' + boundary, dataStartIndex)
+        if (boundaryPos !== -1) i = boundaryPos - 1
       }
       lastline = ''
     } else if (ParsingState.READING_DATA === state) {
@@ -79,20 +82,17 @@ export function parse(multipartBodyBuffer: Buffer, boundary: string): Input[] {
         lastline = '' // mem save
       }
       if ('--' + boundary === lastline) {
-        const j = buffer.length - lastline.length
-        const part = buffer.slice(0, j - 1)
+        const dataEndIndex = i - lastline.length - 1
+        const part = multipartBodyBuffer.slice(dataStartIndex, dataEndIndex)
 
         allParts.push(
           process({ contentDispositionHeader, contentTypeHeader, part })
         )
-        buffer = []
         currentPartHeaders = []
         lastline = ''
         state = ParsingState.READING_PART_SEPARATOR
         contentDispositionHeader = ''
         contentTypeHeader = ''
-      } else {
-        buffer.push(oneByte)
       }
       if (newLineDetected) {
         lastline = ''
@@ -199,7 +199,7 @@ function process(part: Part): Input {
   })
 
   Object.defineProperty(input, 'data', {
-    value: Buffer.from(part.part),
+    value: part.part,
     writable: true,
     enumerable: true,
     configurable: true

@@ -309,13 +309,9 @@ describe('Multipart', function () {
     expect(parts[0].data.toString('utf-8')).to.be.equal(utf8Content)
   })
 
-  // Configurable large data test. Current implementation fails at 128MB due to
-  // JavaScript's max array length.
-  const LARGE_FILE_TEST_SIZE_MB = 50
+  const LARGE_FILE_TEST_SIZE_MB = 150
 
   it(`should parse ${LARGE_FILE_TEST_SIZE_MB}MB data`, function () {
-    this.timeout(0) // disable timeout for large data test
-
     const boundary = '----TestBoundaryLarge'
     const fileSize = LARGE_FILE_TEST_SIZE_MB * 1024 * 1024
 
