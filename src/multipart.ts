@@ -31,6 +31,20 @@ enum ParsingState {
   READING_PART_SEPARATOR
 }
 
+// Longest line accepted outside part data (preamble, boundary and part
+// header lines). Those lines are buffered as a string, so without a cap one
+// request body with no line breaks is held in memory a character at a time.
+export const MAX_LINE_LENGTH = 16 * 1024
+
+export class MultipartParseError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'MultipartParseError'
+    // The ES5 build target breaks instanceof on Error subclasses otherwise.
+    Object.setPrototypeOf(this, MultipartParseError.prototype)
+  }
+}
+
 export function parse(multipartBodyBuffer: Buffer, boundary: string): Input[] {
   let lastline = ''
   let contentDispositionHeader = ''
@@ -50,6 +64,14 @@ export function parse(multipartBodyBuffer: Buffer, boundary: string): Input[] {
     const newLineChar: boolean = oneByte === 0x0a || oneByte === 0x0d
 
     if (!newLineChar) lastline += String.fromCharCode(oneByte)
+    if (
+      state !== ParsingState.READING_DATA &&
+      lastline.length > MAX_LINE_LENGTH
+    ) {
+      throw new MultipartParseError(
+        `Multipart line longer than ${MAX_LINE_LENGTH} characters`
+      )
+    }
     if (ParsingState.INIT === state && newLineDetected) {
       // searching for boundary
       if ('--' + boundary === lastline) {

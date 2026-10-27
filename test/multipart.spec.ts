@@ -1,6 +1,12 @@
 import * as chai from 'chai'
 
-import { parse, DemoData, getBoundary } from '../src/multipart'
+import {
+  parse,
+  DemoData,
+  getBoundary,
+  MAX_LINE_LENGTH,
+  MultipartParseError
+} from '../src/multipart'
 
 const expect = chai.expect
 
@@ -337,5 +343,50 @@ describe('Multipart', function () {
     expect(parts[0].type).to.be.equal('application/octet-stream')
     expect(parts[0].data.length).to.be.equal(fileSize)
     expect(parts[0].data.equals(dataContent)).to.be.true
+  })
+
+  it('should reject a body with no line breaks before the first boundary', function () {
+    const boundary = '----TestBoundaryNoBreaks'
+    const body = Buffer.alloc(MAX_LINE_LENGTH * 4, 'A')
+
+    expect(() => parse(body, boundary)).to.throw(MultipartParseError)
+  })
+
+  it('should reject a part header line longer than the limit', function () {
+    const boundary = '----TestBoundaryLongHeader'
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="`),
+      Buffer.alloc(MAX_LINE_LENGTH * 4, 'A'),
+      Buffer.from(`"\r\n\r\nvalue\r\n--${boundary}--\r\n`)
+    ])
+
+    expect(() => parse(body, boundary)).to.throw(MultipartParseError)
+  })
+
+  it('should reject a long line after a part boundary', function () {
+    const boundary = '----TestBoundaryLongSeparator'
+    const body = Buffer.concat([
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="a"\r\n\r\nvalue\r\n--${boundary}`
+      ),
+      Buffer.alloc(MAX_LINE_LENGTH * 4, 'A')
+    ])
+
+    expect(() => parse(body, boundary)).to.throw(MultipartParseError)
+  })
+
+  it('should accept part header lines up to the limit', function () {
+    const boundary = '----TestBoundaryLongFilename'
+    const prefix = 'Content-Disposition: form-data; name="file"; filename="'
+    const filename = 'a'.repeat(MAX_LINE_LENGTH - prefix.length - 1)
+    const body = Buffer.from(
+      `--${boundary}\r\n${prefix}${filename}"\r\n` +
+        `Content-Type: text/plain\r\n\r\nvalue\r\n--${boundary}--\r\n`
+    )
+
+    const parts = parse(body, boundary)
+
+    expect(parts.length).to.be.equal(1)
+    expect(parts[0].filename).to.be.equal(filename)
   })
 })
