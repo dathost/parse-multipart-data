@@ -31,19 +31,10 @@ enum ParsingState {
   READING_PART_SEPARATOR
 }
 
-// Longest line accepted outside part data (preamble, boundary and part
-// header lines). Those lines are buffered as a string, so without a cap one
-// request body with no line breaks is held in memory a character at a time.
+// Longest line kept outside part data. Those lines are buffered as a string,
+// so they are truncated rather than grown for the whole body; a part header
+// line this long does not come from a real client.
 export const MAX_LINE_LENGTH = 16 * 1024
-
-export class MultipartParseError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'MultipartParseError'
-    // The ES5 build target breaks instanceof on Error subclasses otherwise.
-    Object.setPrototypeOf(this, MultipartParseError.prototype)
-  }
-}
 
 export function parse(multipartBodyBuffer: Buffer, boundary: string): Input[] {
   let lastline = ''
@@ -53,8 +44,6 @@ export function parse(multipartBodyBuffer: Buffer, boundary: string): Input[] {
   let dataStartIndex = 0
   const allParts: Input[] = []
 
-  let currentPartHeaders: string[] = []
-
   for (let i = 0; i < multipartBodyBuffer.length; i++) {
     const oneByte: number = multipartBodyBuffer[i]
     const prevByte: number | null = i > 0 ? multipartBodyBuffer[i - 1] : null
@@ -63,14 +52,15 @@ export function parse(multipartBodyBuffer: Buffer, boundary: string): Input[] {
     const newLineDetected: boolean = oneByte === 0x0a && prevByte === 0x0d
     const newLineChar: boolean = oneByte === 0x0a || oneByte === 0x0d
 
-    if (!newLineChar) lastline += String.fromCharCode(oneByte)
+    // Before the first boundary a line only matters if it is the boundary, so
+    // one character past that length already decides it.
+    const maxLineLength =
+      state === ParsingState.INIT ? boundary.length + 3 : MAX_LINE_LENGTH
     if (
-      state !== ParsingState.READING_DATA &&
-      lastline.length > MAX_LINE_LENGTH
+      !newLineChar &&
+      (state === ParsingState.READING_DATA || lastline.length < maxLineLength)
     ) {
-      throw new MultipartParseError(
-        `Multipart line longer than ${MAX_LINE_LENGTH} characters`
-      )
+      lastline += String.fromCharCode(oneByte)
     }
     if (ParsingState.INIT === state && newLineDetected) {
       // searching for boundary
@@ -80,17 +70,13 @@ export function parse(multipartBodyBuffer: Buffer, boundary: string): Input[] {
       lastline = ''
     } else if (ParsingState.READING_HEADERS === state && newLineDetected) {
       // parsing headers. Headers are separated by an empty line from the content. Stop reading headers when the line is empty
-      if (lastline.length) {
-        currentPartHeaders.push(lastline)
-      } else {
-        // found empty line. search for the headers we want and set the values
-        for (const h of currentPartHeaders) {
-          if (h.toLowerCase().startsWith('content-disposition:')) {
-            contentDispositionHeader = h
-          } else if (h.toLowerCase().startsWith('content-type:')) {
-            contentTypeHeader = h
-          }
-        }
+      // Only the last Content-Disposition and Content-Type headers are used, so
+      // they are kept as they arrive rather than collecting every header line.
+      if (lastline.toLowerCase().startsWith('content-disposition:')) {
+        contentDispositionHeader = lastline
+      } else if (lastline.toLowerCase().startsWith('content-type:')) {
+        contentTypeHeader = lastline
+      } else if (!lastline.length) {
         state = ParsingState.READING_DATA
         dataStartIndex = i + 1
         // Fast forward: skip directly to boundary instead of byte-by-byte
@@ -110,7 +96,6 @@ export function parse(multipartBodyBuffer: Buffer, boundary: string): Input[] {
         allParts.push(
           process({ contentDispositionHeader, contentTypeHeader, part })
         )
-        currentPartHeaders = []
         lastline = ''
         state = ParsingState.READING_PART_SEPARATOR
         contentDispositionHeader = ''

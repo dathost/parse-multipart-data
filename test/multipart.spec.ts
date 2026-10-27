@@ -4,8 +4,7 @@ import {
   parse,
   DemoData,
   getBoundary,
-  MAX_LINE_LENGTH,
-  MultipartParseError
+  MAX_LINE_LENGTH
 } from '../src/multipart'
 
 const expect = chai.expect
@@ -344,49 +343,111 @@ describe('Multipart', function () {
     expect(parts[0].data.length).to.be.equal(fileSize)
     expect(parts[0].data.equals(dataContent)).to.be.true
   })
+  describe('lines outside part data', function () {
+    const boundary = '----TestBoundaryLines'
+    const fieldPart = (name: string, value: string): string =>
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="${name}"\r\n` +
+      `\r\n` +
+      `${value}\r\n`
+    const body =
+      fieldPart('a', '1') + fieldPart('b', '2') + `--${boundary}--\r\n`
+    const longLine = 'x'.repeat(MAX_LINE_LENGTH * 4)
 
-  it('should reject a body with no line breaks before the first boundary', function () {
-    const boundary = '----TestBoundaryNoBreaks'
-    const body = Buffer.alloc(MAX_LINE_LENGTH * 4, 'A')
+    const expectFields = (parts: ReturnType<typeof parse>): void => {
+      expect(parts.map((p) => [p.name, p.data.toString()])).to.deep.equal([
+        ['a', '1'],
+        ['b', '2']
+      ])
+    }
 
-    expect(() => parse(body, boundary)).to.throw(MultipartParseError)
-  })
+    it('should return no parts for a body with no line breaks', function () {
+      expect(parse(Buffer.from(longLine), boundary)).to.deep.equal([])
+    })
 
-  it('should reject a part header line longer than the limit', function () {
-    const boundary = '----TestBoundaryLongHeader'
-    const body = Buffer.concat([
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="`),
-      Buffer.alloc(MAX_LINE_LENGTH * 4, 'A'),
-      Buffer.from(`"\r\n\r\nvalue\r\n--${boundary}--\r\n`)
-    ])
+    it('should return no parts for a non-multipart body', function () {
+      const json = JSON.stringify({ data: longLine })
+      expect(
+        parse(Buffer.from(json), getBoundary('application/json'))
+      ).to.deep.equal([])
+    })
 
-    expect(() => parse(body, boundary)).to.throw(MultipartParseError)
-  })
+    it('should return no parts when the boundary does not match', function () {
+      expect(
+        parse(Buffer.from(longLine + '\r\n' + body), 'other')
+      ).to.deep.equal([])
+    })
 
-  it('should reject a long line after a part boundary', function () {
-    const boundary = '----TestBoundaryLongSeparator'
-    const body = Buffer.concat([
-      Buffer.from(
-        `--${boundary}\r\nContent-Disposition: form-data; name="a"\r\n\r\nvalue\r\n--${boundary}`
-      ),
-      Buffer.alloc(MAX_LINE_LENGTH * 4, 'A')
-    ])
+    it('should parse parts after a long preamble line', function () {
+      expectFields(parse(Buffer.from(`${longLine}\r\n${body}`), boundary))
+    })
 
-    expect(() => parse(body, boundary)).to.throw(MultipartParseError)
-  })
+    it('should not take a long preamble line ending in the boundary as the boundary', function () {
+      const parts = parse(
+        Buffer.from(`${longLine}--${boundary}\r\n${body}`),
+        boundary
+      )
+      expectFields(parts)
+    })
 
-  it('should accept part header lines up to the limit', function () {
-    const boundary = '----TestBoundaryLongFilename'
-    const prefix = 'Content-Disposition: form-data; name="file"; filename="'
-    const filename = 'a'.repeat(MAX_LINE_LENGTH - prefix.length - 1)
-    const body = Buffer.from(
-      `--${boundary}\r\n${prefix}${filename}"\r\n` +
-        `Content-Type: text/plain\r\n\r\nvalue\r\n--${boundary}--\r\n`
-    )
+    it('should parse parts followed by a long epilogue', function () {
+      expectFields(parse(Buffer.from(body + longLine), boundary))
+    })
 
-    const parts = parse(body, boundary)
+    it('should parse a part after a long header line it does not use', function () {
+      const withLongHeader =
+        `--${boundary}\r\n` +
+        `X-Long: ${longLine}\r\n` +
+        `Content-Disposition: form-data; name="a"\r\n` +
+        `\r\n` +
+        `1\r\n` +
+        fieldPart('b', '2') +
+        `--${boundary}--\r\n`
+      expectFields(parse(Buffer.from(withLongHeader), boundary))
+    })
 
-    expect(parts.length).to.be.equal(1)
-    expect(parts[0].filename).to.be.equal(filename)
+    it('should parse a part after many header lines it does not use', function () {
+      const withManyHeaders =
+        `--${boundary}\r\n` +
+        'X-Extra: y\r\n'.repeat(10000) +
+        `Content-Disposition: form-data; name="a"\r\n` +
+        `\r\n` +
+        `1\r\n` +
+        fieldPart('b', '2') +
+        `--${boundary}--\r\n`
+      expectFields(parse(Buffer.from(withManyHeaders), boundary))
+    })
+
+    it('should use the last Content-Disposition and Content-Type of a part', function () {
+      const repeated =
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="first"; filename="first.txt"\r\n` +
+        `Content-Type: text/plain\r\n` +
+        `Content-Disposition: form-data; name="last"; filename="last.txt"\r\n` +
+        `Content-Type: text/csv\r\n` +
+        `\r\n` +
+        `1\r\n` +
+        `--${boundary}--\r\n`
+      const parts = parse(Buffer.from(repeated), boundary)
+      expect(parts.length).to.be.equal(1)
+      expect(parts[0].name).to.be.equal('last')
+      expect(parts[0].filename).to.be.equal('last.txt')
+      expect(parts[0].type).to.be.equal('text/csv')
+    })
+
+    it('should accept part header lines up to the limit', function () {
+      const prefix = 'Content-Disposition: form-data; name="file"; filename="'
+      const filename = 'a'.repeat(MAX_LINE_LENGTH - prefix.length - 1)
+      const parts = parse(
+        Buffer.from(
+          `--${boundary}\r\n${prefix}${filename}"\r\n` +
+            `Content-Type: text/plain\r\n\r\nvalue\r\n--${boundary}--\r\n`
+        ),
+        boundary
+      )
+
+      expect(parts.length).to.be.equal(1)
+      expect(parts[0].filename).to.be.equal(filename)
+    })
   })
 })
